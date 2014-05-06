@@ -1,0 +1,38 @@
+#!/bin/bash
+
+BUILDPATH=$1
+PARAM1=$2
+MODE=$3
+
+echo _______------____
+echo $MODE
+echo $PARAM1
+echo $BUILDPATH
+echo ------------------
+
+shift
+shift
+shift #this is needed because parameters do some shit and this cancels that
+
+cd $BUILDPATH
+if [ "$PARAM1" = "axi" ]; then
+	export CROSS_COMPILE=microblazeel-xilinx-linux-gnu-
+else
+	export CROSS_COMPILE=microblaze-xilinx-linux-gnu-
+fi
+source /opt/Xilinx/14.7/ISE_DS/settings64.sh
+export PATH=${PATH}:/home/benko/Xilinx/u-boot-xlnx/tools/
+
+if [ "$MODE" = "init" ]; then
+	make ARCH=microblaze clean
+	make ARCH=microblaze mmu_defconfig 
+	#echo initilaizeeeeee
+elif [ "$MODE" = "conf" ]
+then
+	#echo configgggg
+	make ARCH=microblaze menuconfig
+elif [ "$MODE" = "simp" ] 
+then 
+	make ARCH=microblaze simpleImage.ab	
+	#echo simpppppdfpdfd
+fi
