@@ -1,0 +1,264 @@
+#!/usr/bin/perl	
+use warnings;
+use File::Copy;
+use Cwd 'abs_path';
+
+print"Welcome to autobuilder\n";
+
+my $scriptPath = abs_path($0);
+my ($scriptFolder) = $scriptPath =~   /(.*)\/.*$/;
+print "path : $scriptFolder\n" if $DEBUG;
+my $DEBUG = 1;
+my $linuxPath;
+my $dtsPath;
+my $hardwarePath;
+
+#if there is no defined value in system.mhs then it is value 0;
+my $param_div = 0;
+my $param_mul = 0;
+my $param_fpu = 0;
+my $param_barrel = 0;
+my $param_memaddr = 0;
+
+my $busSystem = "";
+
+my $initialize = 0;
+my $simpleImage = 0;
+my $configKernel = 0;
+my $programming = 0;
+my $copyDts = 0;
+
+#-------------read arguments----------
+foreach my $arg (@ARGV) {
+	parseParameters($arg);
+}
+#-------------read paths from config-------------
+getConfigPaths();
+
+
+#-------------do the stuff------------
+getCPUfeatures();
+if($initialize)
+{
+	copyDTS();
+	initializeLinuxConfig();
+	updateConfig();
+}
+if($copyDts)
+{
+	copyDTS();
+	updateConfig();
+}
+if($configKernel)
+{
+	configKernel();
+}
+if($simpleImage)
+{
+	buildSimpleImage();
+}
+if($programming)
+{
+	programmingFPGA();
+}
+
+#-------------------------------------
+#-------------subs--------------------
+#-------------------------------------
+sub parseParameters
+{
+	#get parameters
+	my ($a1) = @_;
+	if($a1 =~ /-init/)
+	{
+		print"Initialize linux configuration\n";
+		$initialize = 1;
+	}
+	if($a1 =~ /-dts/)
+	{
+		print"copy device tree\n";
+		$copyDts = 1;
+	}
+	if($a1 =~ /-simp/)
+	{
+		print"build simpleImage\n";
+		$simpleImage = 1;
+	}
+	if($a1 =~ /-conf/)
+	{
+		print"Kernel configuration\n";
+		$configKernel = 1;
+	}
+	if($a1 =~ /-prog/)
+	{
+		print"Programming\n";
+		$programming = 1;
+	}
+	
+}
+
+sub getConfigPaths 
+{
+	my $file = ".paths";
+	open my $in,  '<',  $file or die "Can't read file: $!";
+	while( <$in> )
+	{
+		parsePaths($_);
+	}
+}
+
+	sub parsePaths
+	{
+		my ($a1) = @_;
+		if($a1 =~ /^#/)
+		{	# comment line
+			return;
+		}
+		if($a1 =~ /^hw:/)
+		{
+			$hardwarePath = $a1 =~ s/hw:\s*//r;
+			$hardwarePath = $hardwarePath =~ s/\/$//r;
+			chop($hardwarePath);		
+			print "Path of FPGA project: $hardwarePath\n" if $DEBUG;
+		}
+		if($a1 =~ /^linux:/)
+		{
+			$linuxPath = $a1 =~ s/linux:\s*//r;
+			$linuxPath = $linuxPath =~ s/\/$//r;
+			chop($linuxPath);
+			print "Path of Liunx kernel: $linuxPath\n" if $DEBUG;
+		}
+		if($a1 =~ /^dts:/)
+		{
+			$dtsPath = $a1 =~ s/dts:\s*//r;
+			$dtsPath = $dtsPath =~ s/\/$//r;
+			chop($dtsPath);
+			print "Path of the device tree project: $dtsPath\n" if $DEBUG;
+		}
+	}
+
+sub updateConfig
+{
+	#`touch .config.new`;
+	#change the file
+	#my $file = ".config";
+	my $file = $linuxPath . "/.config";
+	open my $in,  '<',  $file      or die "Can't read old file: $!";
+	open my $out, '>', ".config.new" or die "Can't write new file: $!";
+
+	while( <$in> )
+	{
+		#here we could use a bit of optimization
+	    s/USE_BARREL=.*$/USE_BARREL=$param_barrel/g;
+	    s/USE_DIV=.*$/USE_DIV=$param_div/g;
+	    s/USE_HW_MUL=.*$/USE_HW_MUL=$param_mul/g;
+	    s/USE_FPU=.*$/USE_FPU=$param_fpu/g;
+		s/CONFIG_KERNEL_BASE_ADDR=.*$/CONFIG_KERNEL_BASE_ADDR=$param_memaddr/g;
+		s/FAMILY="virtex5"/FAMILY="spartan6"/g;
+	    print $out $_;
+	}
+	close $out;
+	#copy back to the original file and delete the temporary one
+	$cmd = `cp .config.new $file`;
+	$cmd = `rm .config.new`;
+}
+sub copyDTS
+{
+	my $source = $dtsPath . "/microblaze_0/libsrc/device-tree_v0_00_x/xilinx.dts";
+	my $target = $linuxPath . "/arch/microblaze/boot/dts/ab.dts";
+	#print "macs: $source \n $target\n" if $DEBUG;
+	copy($source,$target) or die "Copy failed: $!";
+}
+
+sub getCPUfeatures
+{
+	my $source = $dtsPath . "/microblaze_0/libsrc/device-tree_v0_00_x/xilinx.dts";
+	print"$source\n";
+	open my $in,  '<',  $source or die "Can't read file: $!";
+	while( <$in> )
+	{
+		#print"$_";
+		parseMHSLines($_);
+	}
+}
+
+	sub parseMHSLines
+	{
+		my ($a1) = @_;
+		if($a1 =~ /use-barrel/)
+		{
+			($param_barrel) = $a1 =~   /0x(\d)/;
+		   	print "barrel: $param_barrel\n" if $DEBUG;
+			return;
+		}
+		if($a1 =~ /use-fpu/)
+		{
+			($param_fpu) = $a1 =~   /0x(\d)/;
+			print"fpu: $param_fpu\n" if $DEBUG;
+			return;
+		}
+		if($a1 =~ /use-hw-mul/)
+		{
+			($param_mul) = $a1 =~   /0x(\d)/;
+			print"mul: $param_mul\n" if $DEBUG;
+			return;
+		}
+		if($a1 =~ /use-div/)
+		{
+			($param_div) = $a1 =~   /0x(\d)/;
+			print "div: $param_div\n" if $DEBUG;
+			return;
+		}
+		if($a1 =~ /memory@/)
+		{
+			#32 bit address after memory@
+			($param_memaddr) = $a1 =~ /memory@(........)/;
+			$param_memaddr =~ s/^/0x/g;
+			print "mem: ". $param_memaddr. "\n" if $DEBUG;
+		}
+
+		if($a1 =~ /bus-handle =/)
+		{
+			#print"bus line here\n";
+			if($a1 =~ /axi/)
+			{
+				$busSystem = "axi";
+			print"axi\n";
+			}
+			elsif($a1 =~ /plb/)
+			{
+				$busSystem = "plb";
+			print"plb\n";
+			}
+		}
+	}
+
+sub initializeLinuxConfig
+{
+	@args = ("$scriptFolder" . "/kernelScripts", "$linuxPath" ,"$busSystem", "init");
+   system(@args) == 0 or die "system @args failed: $?"
+}
+
+sub buildSimpleImage
+{
+	@args = ("$scriptFolder" . "/kernelScripts", "$linuxPath" ,"$busSystem", "simp");
+   system(@args) == 0 or die "system @args failed: $?"
+}
+sub configKernel
+{
+	@args = ("$scriptFolder" . "/kernelScripts", "$linuxPath" ,"$busSystem", "conf");
+   system(@args) == 0 or die "system @args failed: $?"
+}
+sub programmingFPGA
+{
+	my $xmdArg0 = $hardwarePath . "/implementation/system.bit";
+	my $xmdArg1 = $linuxPath . "/arch/microblaze/boot/simpleImage.ab";
+
+	@args = ("$scriptFolder" . "/progScript", "$xmdArg0" ,"$xmdArg1", );
+   system(@args) == 0 or die "system @args failed: $?"
+}
+
+sub printHelp
+{
+	print "-init	for setting up the compilation first time\n";
+}
