@@ -4,12 +4,6 @@ BUILDPATH=$1
 PARAM1=$2
 MODE=$3
 
-echo _______------____
-echo $MODE
-echo $PARAM1
-echo $BUILDPATH
-echo ------------------
-
 shift
 shift
 shift #this is needed because parameters do some shit and this cancels that

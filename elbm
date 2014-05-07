@@ -3,30 +3,36 @@ use warnings;
 use File::Copy;
 use Cwd 'abs_path';
 
-print"Welcome to autobuilder\n";
+print"Welcome to Embedded Linux builder for Microblaze\n";
 
+my $DEBUG = 0;
 my $scriptPath = abs_path($0);
+# cut the file name from the end, so we get the folder path
 my ($scriptFolder) = $scriptPath =~   /(.*)\/.*$/;
 print "path : $scriptFolder\n" if $DEBUG;
-my $DEBUG = 1;
+
 my $linuxPath;
 my $dtsPath;
 my $hardwarePath;
+my $rootfsPath     	= "";
 
 #if there is no defined value in system.mhs then it is value 0;
-my $param_div = 0;
-my $param_mul = 0;
-my $param_fpu = 0;
-my $param_barrel = 0;
-my $param_memaddr = 0;
+my $param_div 		= 0;
+my $param_mul 		= 0;
+my $param_fpu 		= 0;
+my $param_barrel 	= 0;
+my $param_memaddr 	= 0;
 
-my $busSystem = "";
+my $busSystem 		= "";
 
-my $initialize = 0;
-my $simpleImage = 0;
-my $configKernel = 0;
-my $programming = 0;
-my $copyDts = 0;
+my $initialize 		= 0;
+my $simpleImage 	= 0;
+my $configKernel 	= 0;
+my $programming 	= 0;
+my $copyDts 		= 0;
+my $openBuildrootConfig = 0;
+my $useBuildRootImage	= 0;
+my $makeBuildrootVar 	= 0;
 
 #-------------read arguments----------
 foreach my $arg (@ARGV) {
@@ -40,8 +46,11 @@ getConfigPaths();
 getCPUfeatures();
 if($initialize)
 {
+	# copy the dts file
 	copyDTS();
+	# reset the Kernel's config 
 	initializeLinuxConfig();
+	# copy the dts parameters to the Kernel config
 	updateConfig();
 }
 if($copyDts)
@@ -49,8 +58,21 @@ if($copyDts)
 	copyDTS();
 	updateConfig();
 }
+if($openBuildrootConfig)
+{
+	buildrootConfig();
+}
+if($useBuildRootImage)
+{
+	setRootFsImage();
+}
+if($makeBuildrootVar)
+{
+	makeBuildroot();
+}
 if($configKernel)
 {
+	# open the graphic kernel config
 	configKernel();
 }
 if($simpleImage)
@@ -67,31 +89,46 @@ if($programming)
 #-------------------------------------
 sub parseParameters
 {
-	#get parameters
+	# get parameters
 	my ($a1) = @_;
 	if($a1 =~ /-init/)
 	{
-		print"Initialize linux configuration\n";
+		print"[ACTION] Initialize linux configuration\n";
 		$initialize = 1;
 	}
 	if($a1 =~ /-dts/)
 	{
-		print"copy device tree\n";
+		print"[ACTION] copy device tree\n";
 		$copyDts = 1;
+	}
+	if($a1 =~ /-usebr/)
+	{
+		print"[ACTION] using Buildroot image\n";
+		$useBuildRootImage = 1;
+	}
+	if($a1 =~ /-confbr/)
+	{
+		print"[ACTION] rootfs config\n";
+		$openBuildrootConfig = 1;
+	}
+	if($a1 =~ /-makebr/)
+	{
+		print"[ACTION] build Buildroot\n";
+		$makeBuildrootVar = 1;
 	}
 	if($a1 =~ /-simp/)
 	{
-		print"build simpleImage\n";
+		print"[ACTION] build simpleImage\n";
 		$simpleImage = 1;
 	}
-	if($a1 =~ /-conf/)
+	if($a1 =~ /-conf$/)
 	{
-		print"Kernel configuration\n";
+		print"[ACTION] Kernel configuration\n";
 		$configKernel = 1;
 	}
 	if($a1 =~ /-prog/)
 	{
-		print"Programming\n";
+		print"[ACTION] Programming\n";
 		$programming = 1;
 	}
 	
@@ -119,21 +156,28 @@ sub getConfigPaths
 			$hardwarePath = $a1 =~ s/hw:\s*//r;
 			$hardwarePath = $hardwarePath =~ s/\/$//r;
 			chop($hardwarePath);		
-			print "Path of FPGA project: $hardwarePath\n" if $DEBUG;
+			#print "Path of FPGA project: $hardwarePath\n" if $DEBUG;
 		}
 		if($a1 =~ /^linux:/)
 		{
 			$linuxPath = $a1 =~ s/linux:\s*//r;
 			$linuxPath = $linuxPath =~ s/\/$//r;
 			chop($linuxPath);
-			print "Path of Liunx kernel: $linuxPath\n" if $DEBUG;
+			#print "Path of Liunx kernel: $linuxPath\n" if $DEBUG;
 		}
 		if($a1 =~ /^dts:/)
 		{
 			$dtsPath = $a1 =~ s/dts:\s*//r;
 			$dtsPath = $dtsPath =~ s/\/$//r;
 			chop($dtsPath);
-			print "Path of the device tree project: $dtsPath\n" if $DEBUG;
+			#print "Path of the device tree project: $dtsPath\n" if $DEBUG;
+		}
+		if($a1 =~ /^rfs:/)
+		{
+			$rootfsPath = $a1 =~ s/rfs:\s*//r;
+			$rootfsPath = $rootfsPath =~ s/\/$//r;
+			chop($rootfsPath);
+			#print "Path of Buildroot: $rootfsPath\n" if $DEBUG;
 		}
 	}
 
@@ -162,6 +206,46 @@ sub updateConfig
 	$cmd = `cp .config.new $file`;
 	$cmd = `rm .config.new`;
 }
+
+sub setRootFsImage
+{
+	#change the file
+	#my $file = ".config";
+	my $file = $linuxPath . "/.config";
+	open my $in,  '<',  $file      or die "Can't read old file: $!";
+	open my $out, '>', ".config.new" or die "Can't write new file: $!";
+
+	while( <$in> )
+	{
+		if($_ =~ /CONFIG_BLK_DEV_INITRD/)
+		{
+			print $out "CONFIG_BLK_DEV_INITRD=y\nCONFIG_INITRAMFS_SOURCE=\"" . "$rootfsPath" . "/output/images/rootfs.cpio.gz\"\nCONFIG_INITRAMFS_ROOT_UID=0\nCONFIG_INITRAMFS_ROOT_GID=0\nCONFIG_RD_GZIP=y\n# CONFIG_RD_BZIP2 is not set\n# CONFIG_RD_LZMA is not set\n# CONFIG_RD_XZ is not set\n# CONFIG_RD_LZO is not set\n# CONFIG_RD_LZ4 is not set\n";
+			 
+		}
+		elsif(	$_ =~ /CONFIG_INITRAMFS_ROOT/ or
+			$_ =~ /CONFIG_INITRAMFS_SOURCE/ or
+			$_ =~ /CONFIG_RD_GZIP/ or
+			$_ =~ /CONFIG_RD_BZIP2/ or
+			$_ =~ /CONFIG_RD_LZMA/ or
+			$_ =~ /CONFIG_RD_XZ/ or
+			$_ =~ /CONFIG_RD_LZO/ or
+			$_ =~ /CONFIG_RD_LZ4/
+			)
+		{
+		}
+		else
+		{
+			 s/#\sCONFIG_INITRAMFS_COMPRESSION_NONE\sis\snot\sset/CONFIG_INITRAMFS_COMPRESSION_NONE=y/g;
+			print $out $_;	
+		}
+	}
+	
+	close $out;
+	#copy back to the original file and delete the temporary one
+	$cmd = `cp .config.new $file`;
+	$cmd = `rm .config.new`;
+}
+
 sub copyDTS
 {
 	my $source = $dtsPath . "/microblaze_0/libsrc/device-tree_v0_00_x/xilinx.dts";
@@ -173,7 +257,7 @@ sub copyDTS
 sub getCPUfeatures
 {
 	my $source = $dtsPath . "/microblaze_0/libsrc/device-tree_v0_00_x/xilinx.dts";
-	print"$source\n";
+	print"$source\n" if $DEBUG;
 	open my $in,  '<',  $source or die "Can't read file: $!";
 	while( <$in> )
 	{
@@ -223,19 +307,35 @@ sub getCPUfeatures
 			if($a1 =~ /axi/)
 			{
 				$busSystem = "axi";
-			print"axi\n";
+			print"axi\n" if $DEBUG;
 			}
 			elsif($a1 =~ /plb/)
 			{
 				$busSystem = "plb";
-			print"plb\n";
+			print"plb\n" if $DEBUG;
 			}
 		}
 	}
 
+# the following subs are calling system commands
+# the first parameter of @args is the command the rest of them are the 
+# parameters of the command
+
 sub initializeLinuxConfig
 {
 	@args = ("$scriptFolder" . "/kernelScripts", "$linuxPath" ,"$busSystem", "init");
+   system(@args) == 0 or die "system @args failed: $?"
+}
+
+sub buildrootConfig
+{
+	@args = ("make", "-C", "$rootfsPath" ,"menuconfig");
+   system(@args) == 0 or die "system @args failed: $?"
+}
+
+sub makeBuildroot
+{
+	@args = ("make", "-C", "$rootfsPath" );
    system(@args) == 0 or die "system @args failed: $?"
 }
 
@@ -260,5 +360,6 @@ sub programmingFPGA
 
 sub printHelp
 {
+	# TODO extend this
 	print "-init	for setting up the compilation first time\n";
 }
