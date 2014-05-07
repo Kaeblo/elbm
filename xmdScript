@@ -1,0 +1,7 @@
+fpga -cable type xilinx_plugin modulename digilent_plugin -f [lindex $argv 0]
+
+connect mb mdm -cable type xilinx_plugin modulename digilent_plugin
+
+dow [lindex $argv 1]
+
+con

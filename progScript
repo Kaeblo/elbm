@@ -1,0 +1,13 @@
+#!/bin/bash
+
+PARAM1=$1
+PARAM2=$2
+
+shift
+shift #this is needed because parameters do some shit and this cancels that
+
+
+source /opt/Xilinx/14.7/ISE_DS/settings64.sh
+
+xmd -tcl xmdScript "$PARAM1" "$PARAM2"
+
